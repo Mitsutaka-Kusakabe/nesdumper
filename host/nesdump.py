@@ -74,19 +74,28 @@ def main():
     prg_data = read_exact(ser, prg_bytes)
     ser.readline()  # PRG_END
 
-    chr_data = b""
+    chr_data = bytearray()
     if chr_bytes > 0:
-        print(f"\nDumping CHR-ROM ({args.chr} KB from 0x0000)...")
-        cmd = f"DUMP_CHR 0000 {chr_bytes:04X}\n".encode("ascii")
-        ser.write(cmd)
+        num_banks = max(1, chr_bytes // 8192)
+        print(f"\nDumping CHR-ROM ({args.chr} KB across {num_banks} bank(s))...")
 
-        while True:
-            line = ser.readline().decode("latin-1", errors="ignore").strip()
-            if "CHR_START" in line:
-                break
+        for b in range(num_banks):
+            if num_banks > 1 or args.mapper == 3:
+                # Switch CNROM bank via P 8000 <bank>
+                ser.write(f"P 8000 {b:02X}\n".encode("ascii"))
+                time.sleep(0.04)
+                ser.readline()  # drain WROK
 
-        chr_data = read_exact(ser, chr_bytes)
-        ser.readline()  # CHR_END
+            ser.write(b"C 0000 2000\n")
+            # Wait for OK 2000
+            while True:
+                line = ser.readline().decode("latin-1", errors="ignore").strip()
+                if "OK" in line:
+                    break
+            bank_chunk = read_exact(ser, 8192)
+            chr_data.extend(bank_chunk)
+            crc_line = ser.readline().decode("latin-1", errors="ignore").strip()
+            print(f"  Bank {b} done ({crc_line})")
 
     # Generate iNES Header (16 bytes)
     header = bytearray(16)

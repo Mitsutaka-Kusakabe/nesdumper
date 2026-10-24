@@ -237,6 +237,8 @@
           <label>タイトルプリセット</label>
           <select id="presetSelect">
             <option value="ninjakun">忍者くん 魔城の冒険 (NROM-128 / 16KB PRG + 8KB CHR)</option>
+            <option value="starsoldier">スターソルジャー (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
+            <option value="mighty">マイティボンジャック (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
             <option value="nrom256">NROM-256 (32KB PRG + 8KB CHR) 例: マリオ等</option>
             <option value="custom">カスタム設定</option>
           </select>
@@ -258,16 +260,27 @@
               <label>CHR-ROM (KB)</label>
               <select id="chrSize">
                 <option value="8">8 KB ($0000-$1FFF)</option>
+                <option value="16">16 KB (2バンク)</option>
+                <option value="32">32 KB (4バンク)</option>
                 <option value="0">0 KB (CHR-RAM)</option>
               </select>
             </div>
           </div>
-          <div class="form-group">
-            <label>ミラーリング</label>
-            <select id="mirroring">
-              <option value="1">Vertical (忍者くん, マリオ等)</option>
-              <option value="0">Horizontal</option>
-            </select>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="form-group">
+              <label>マッパー</label>
+              <select id="mapperSelect">
+                <option value="0">Mapper 0 (NROM)</option>
+                <option value="3">Mapper 3 (CNROM バンク切替)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>ミラーリング</label>
+              <select id="mirroring">
+                <option value="1">Vertical (忍者くん, スターソルジャー等)</option>
+                <option value="0">Horizontal</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -339,18 +352,36 @@
       consoleLog.textContent = '';
     });
 
+    const mapperSelect = document.getElementById('mapperSelect');
+
     presetSelect.addEventListener('change', () => {
       if (presetSelect.value === 'ninjakun') {
         customSettings.style.display = 'none';
         outFileName.value = 'ninjakun_majou.nes';
         prgSizeSelect.value = '16';
         chrSizeSelect.value = '8';
+        mapperSelect.value = '0';
+        mirroringSelect.value = '1';
+      } else if (presetSelect.value === 'starsoldier') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'star_soldier.nes';
+        prgSizeSelect.value = '32';
+        chrSizeSelect.value = '32';
+        mapperSelect.value = '3';
+        mirroringSelect.value = '1';
+      } else if (presetSelect.value === 'mighty') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'mighty_bomb_jack.nes';
+        prgSizeSelect.value = '32';
+        chrSizeSelect.value = '32';
+        mapperSelect.value = '3';
         mirroringSelect.value = '1';
       } else if (presetSelect.value === 'nrom256') {
         customSettings.style.display = 'none';
         outFileName.value = 'game_nrom256.nes';
         prgSizeSelect.value = '32';
         chrSizeSelect.value = '8';
+        mapperSelect.value = '0';
         mirroringSelect.value = '0';
       } else {
         customSettings.style.display = 'block';
@@ -601,6 +632,7 @@
       try {
         const prgKB = parseInt(prgSizeSelect.value, 10);
         const chrKB = parseInt(chrSizeSelect.value, 10);
+        const mapper = parseInt(mapperSelect.value, 10);
         const mirroring = parseInt(mirroringSelect.value, 10); // 1 = Vertical, 0 = Horizontal
 
         const prgBytesTotal = prgKB * 1024;
@@ -608,7 +640,7 @@
         const prgStartAddr = (prgKB === 16) ? 0xC000 : 0x8000;
 
         log(`\n========================================`);
-        log(`吸い出し開始: PRG ${prgKB}KB (開始: $${prgStartAddr.toString(16).toUpperCase()}), CHR ${chrKB}KB`);
+        log(`吸い出し開始: Mapper ${mapper}, PRG ${prgKB}KB (開始: $${prgStartAddr.toString(16).toUpperCase()}), CHR ${chrKB}KB`);
 
         await drainSerial(150);
         bufReader = new BufferedSerialReader(port.readable);
@@ -634,30 +666,46 @@
         const jsPrgCrc = computeCrc32Hex(prgData);
         log(`PRG-ROM 完了 (${prgData.length} bytes) | CRC32: ${jsPrgCrc} (${prgCrcLine || 'N/A'})`);
 
-        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>'
-        let chrData = new Uint8Array(0);
+        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>' (with bank-switching for Mapper 3 / CNROM)
+        let chrData = new Uint8Array(chrBytesTotal);
         let jsChrCrc = 'N/A';
         if (chrBytesTotal > 0) {
-          log(`CHR-ROM (${chrKB}KB) を吸い出し中...`);
-          const chrCmd = `C 0000 ${chrBytesTotal.toString(16).toUpperCase()}`;
-          await sendCommand(chrCmd);
+          const numBanks = Math.max(1, Math.floor(chrBytesTotal / 8192));
+          log(`CHR-ROM (${chrKB}KB / ${numBanks}バンク) を吸い出し中...`);
 
-          const chrHdr = await bufReader.readLineMatching('OK ', 5000);
-          if (!chrHdr) throw new Error('CHR開始応答 (OK) が受信できませんでした');
-          log(`CHR応答: ${chrHdr}`);
+          for (let b = 0; b < numBanks; b++) {
+            if (numBanks > 1 || mapper === 3) {
+              // Switch CNROM CHR bank (write to $8000)
+              const bankHex = b.toString(16).padStart(2, '0');
+              await sendCommand(`P 8000 ${bankHex}`);
+              await new Promise(r => setTimeout(r, 40));
+              await bufReader.readLine(1000); // drain WROK
+            }
 
-          chrData = await bufReader.readExactBytes(chrBytesTotal, (done, total) => {
-            const pct = 50 + Math.floor((done / total) * 50);
-            progressBar.style.width = `${pct}%`;
-            progressLabel.textContent = `CHR: ${done} / ${total} bytes (${pct}%)`;
-          });
+            const chrCmd = `C 0000 2000`;
+            await sendCommand(chrCmd);
 
-          const chrCrcLine = await bufReader.readLineMatching('CRC ', 3000);
+            const chrHdr = await bufReader.readLineMatching('OK ', 5000);
+            if (!chrHdr) throw new Error(`CHR バンク ${b} 開始応答 (OK) が受信できませんでした`);
+
+            const bankChunk = await bufReader.readExactBytes(8192, (done, total) => {
+              const currentTotal = (b * 8192) + done;
+              const pct = 50 + Math.floor((currentTotal / chrBytesTotal) * 50);
+              progressBar.style.width = `${pct}%`;
+              progressLabel.textContent = `CHR バンク ${b+1}/${numBanks}: ${currentTotal} / ${chrBytesTotal} bytes (${pct}%)`;
+            });
+
+            chrData.set(bankChunk, b * 8192);
+
+            const bankCrcLine = await bufReader.readLineMatching('CRC ', 3000);
+            log(`  -> バンク ${b} (8KB) 完了 | ${bankCrcLine || ''}`);
+          }
+
           jsChrCrc = computeCrc32Hex(chrData);
-          log(`CHR-ROM 完了 (${chrData.length} bytes) | CRC32: ${jsChrCrc} (${chrCrcLine || 'N/A'})`);
+          log(`CHR-ROM 全バンク完了 (${chrData.length} bytes) | Combined CRC32: ${jsChrCrc}`);
 
-          // Preview CHR
-          renderChrTiles(chrData);
+          // Preview CHR (Bank 0)
+          renderChrTiles(chrData.subarray(0, 8192));
         }
 
         bufReader.release();
@@ -674,8 +722,8 @@
         inesHeader[3] = 0x1A; // EOF
         inesHeader[4] = prgKB / 16; // 16KB PRG units
         inesHeader[5] = chrKB / 8;  // 8KB CHR units
-        inesHeader[6] = (mirroring & 0x01); // Mapper 0 lower nibble + Mirroring
-        inesHeader[7] = 0x00; // Mapper 0 upper nibble
+        inesHeader[6] = ((mapper & 0x0F) << 4) | (mirroring & 0x01); // Mapper lower nibble + Mirroring
+        inesHeader[7] = (mapper & 0xF0); // Mapper upper nibble
 
         const totalNesSize = 16 + prgData.length + chrData.length;
         const nesRom = new Uint8Array(totalNesSize);
