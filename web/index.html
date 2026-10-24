@@ -238,7 +238,8 @@
           <select id="presetSelect">
             <option value="ninjakun">忍者くん 魔城の冒険 (NROM-128 / 16KB PRG + 8KB CHR)</option>
             <option value="starsoldier">スターソルジャー (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
-            <option value="mighty">マイティボンジャック (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
+            <option value="mighty" selected>マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
+            <option value="mighty_mapper185">マイティボンジャック (原本仕様 Mapper 185 / 32KB PRG + 8KB CHR)</option>
             <option value="nrom256">NROM-256 (32KB PRG + 8KB CHR) 例: マリオ等</option>
             <option value="custom">カスタム設定</option>
           </select>
@@ -272,6 +273,7 @@
               <select id="mapperSelect">
                 <option value="0">Mapper 0 (NROM)</option>
                 <option value="3">Mapper 3 (CNROM バンク切替)</option>
+                <option value="185">Mapper 185 (CNROM セキュリティプロテクト)</option>
               </select>
             </div>
             <div class="form-group">
@@ -371,11 +373,18 @@
         mirroringSelect.value = '1';
       } else if (presetSelect.value === 'mighty') {
         customSettings.style.display = 'none';
-        outFileName.value = 'mighty_bomb_jack.nes';
+        outFileName.value = 'mighty_bomb_jack_mapper0.nes';
         prgSizeSelect.value = '32';
-        chrSizeSelect.value = '32';
-        mapperSelect.value = '3';
-        mirroringSelect.value = '1';
+        chrSizeSelect.value = '8';
+        mapperSelect.value = '0'; // Mapper 0 for maximum emulator compatibility
+        mirroringSelect.value = '0'; // Horizontal Mirroring
+      } else if (presetSelect.value === 'mighty_mapper185') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'mighty_bomb_jack_mapper185.nes';
+        prgSizeSelect.value = '32';
+        chrSizeSelect.value = '8';
+        mapperSelect.value = '185'; // Original Mapper 185
+        mirroringSelect.value = '0'; // Horizontal Mirroring
       } else if (presetSelect.value === 'nrom256') {
         customSettings.style.display = 'none';
         outFileName.value = 'game_nrom256.nes';
@@ -387,6 +396,9 @@
         customSettings.style.display = 'block';
       }
     });
+
+    // Initialize preset values
+    presetSelect.dispatchEvent(new Event('change'));
 
     // WebSerial Connect
     btnConnect.addEventListener('click', async () => {
@@ -666,10 +678,18 @@
         const jsPrgCrc = computeCrc32Hex(prgData);
         log(`PRG-ROM 完了 (${prgData.length} bytes) | CRC32: ${jsPrgCrc} (${prgCrcLine || 'N/A'})`);
 
-        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>' (with bank-switching for Mapper 3 / CNROM)
+        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>' (with bank-switching for Mapper 3 / 185)
         let chrData = new Uint8Array(chrBytesTotal);
         let jsChrCrc = 'N/A';
         if (chrBytesTotal > 0) {
+          if (mapper === 185 || presetSelect.value.startsWith('mighty')) {
+            // Unlock Mighty Bomb Jack / Mapper 185 CHR protection
+            log('Mapper 185 CHRプロテクト解除コマンド (P 8000 11) を送信中...');
+            await sendCommand('P 8000 11');
+            await new Promise(r => setTimeout(r, 40));
+            await bufReader.readLine(1000); // drain WROK
+          }
+
           const numBanks = Math.max(1, Math.floor(chrBytesTotal / 8192));
           log(`CHR-ROM (${chrKB}KB / ${numBanks}バンク) を吸い出し中...`);
 
@@ -730,6 +750,15 @@
         nesRom.set(inesHeader, 0);
         nesRom.set(prgData, 16);
         nesRom.set(chrData, 16 + prgData.length);
+
+        // Apply compatibility patch for Mighty Bomb Jack on Mapper 0
+        if (presetSelect.value === 'mighty') {
+          if (nesRom[16 + 0x2A] === 0xF0 && nesRom[16 + 0x2B] === 0xEA) {
+            nesRom[16 + 0x2A] = 0xEA;
+            nesRom[16 + 0x2B] = 0xEA;
+            log('💡 Mapper 0 互換化パッチを適用しました ($802A: BEQ -> NOP NOP)');
+          }
+        }
 
         const combinedPayload = nesRom.subarray(16);
         const combinedCrc = computeCrc32Hex(combinedPayload);
