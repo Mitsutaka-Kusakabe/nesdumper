@@ -276,3 +276,14 @@ $nes = New-Object byte[] (16 + 16384 + 8192)
 - [開発日記・トラブルシューティング記録 ＆ AI引き継ぎガイド (`docs/DEVLOG.md`)](docs/DEVLOG.md)
 - [NESdev Wiki - Cartridge connector (Famicom 60-pin)](https://www.nesdev.org/wiki/Cartridge_connector)
 - [GOROman/nes-rom-reader - docs/hardware-design.md](https://github.com/GOROman/nes-rom-reader/blob/main/docs/hardware-design.md)
+
+---
+
+## 📄 ライセンス・免責事項
+
+本プロジェクトは [MIT License](LICENSE) の下で公開されています。
+
+### ⚠️ 免責事項（Disclaimer）
+- 本ソフトウェア、回路配線情報、およびドキュメントは、研究・学習および個人の電子工作を目的として「現状有姿（AS IS）」で提供されます。
+- 作者および権利者は、本ツールの使用、誤配線、ショート、静電気等により生じたいかなる損害（マイコンボードやカートリッジの破損・故障・データ消失等を含む）についても一切の責任を負いません。すべてご自身の責任においてご使用ください。
+- カートリッジの吸い出しは、ご自身が合法的に所有するカートリッジの個人利用・バックアップ目的でのみ実施し、著作権法および関係法令を遵守してください。

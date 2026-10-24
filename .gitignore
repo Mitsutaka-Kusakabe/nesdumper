@@ -1,4 +1,18 @@
-# Dumped ROM images
+# Dumped ROM images & save files
 *.nes
 *.bin
 *.sav
+*.rom
+*.dump
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor & Build artifacts
+.vscode/
+.idea/
+*.tmp
+*.log

@@ -1,0 +1,33 @@
+MIT License
+
+Copyright (c) 2026 Mitsutaka Kusakabe
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+### 免責事項および利用規約（Disclaimer & Usage Terms）
+
+1. **完全免責（No Warranty & No Liability）**
+   - 本ソフトウェア、回路配線情報、および関連ドキュメントは、教育・研究および個人による電子工作の実験を目的として「現状有姿（AS IS）」で提供されます。
+   - 作者および権利者は、本ソフトウェアや配線の使用、誤配線、ショート、静電気等によって生じたいかなる損害（ハードウェアの破損、マイコンボードやカートリッジの故障・焼損、データの損失、その他一切の直接的・間接的損害）についても、いかなる責任も負いません。すべて利用者の自己責任においてご使用ください。
+
+2. **著作権法および関係法令の遵守（Legal Compliance）**
+   - 本ツールは、利用者が正法に所有するカートリッジの個人利用を目的としたバックアップ・研究のために設計されています。
+   - 著作権法を遵守し、著作権者の許諾なく第三者の著作物を複製・再配布・頒布・公衆送信する行為には絶対に使用しないでください。
