@@ -240,7 +240,8 @@
             <option value="starsoldier">スターソルジャー (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
             <option value="mighty">マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
             <option value="mighty_mapper185">マイティボンジャック (原本仕様 Mapper 185 / 32KB PRG + 8KB CHR)</option>
-            <option value="smb3" selected>スーパーマリオブラザーズ3 (Mapper 4 MMC3 / 256KB PRG + 128KB CHR)</option>
+            <option value="smb1" selected>スーパーマリオブラザーズ (NROM-256 / 32KB PRG + 8KB CHR / 垂直ミラー)</option>
+            <option value="smb3">スーパーマリオブラザーズ3 (Mapper 4 MMC3 / 256KB PRG + 128KB CHR)</option>
             <option value="nrom256">NROM-256 (32KB PRG + 8KB CHR) 例: マリオ等</option>
             <option value="custom">カスタム設定</option>
           </select>
@@ -389,6 +390,13 @@
         chrSizeSelect.value = '8';
         mapperSelect.value = '185'; // Original Mapper 185
         mirroringSelect.value = '0'; // Horizontal Mirroring
+      } else if (presetSelect.value === 'smb1') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'super_mario_bros.nes';
+        prgSizeSelect.value = '32';
+        chrSizeSelect.value = '8';
+        mapperSelect.value = '0';
+        mirroringSelect.value = '1'; // Vertical
       } else if (presetSelect.value === 'smb3') {
         customSettings.style.display = 'none';
         outFileName.value = 'super_mario_bros_3.nes';
