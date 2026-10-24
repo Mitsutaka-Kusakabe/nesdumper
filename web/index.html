@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NES Dumper - Famicom ROM Reader</title>
+  <style>
+    :root {
+      --bg: #1a1a24;
+      --card-bg: #242436;
+      --accent: #e52521; /* Famicom Red */
+      --accent-hover: #ff3b30;
+      --gold: #d4af37;  /* Famicom Gold */
+      --text: #f0f0f5;
+      --text-dim: #9b9ba8;
+      --border: #36364f;
+      --success: #34c759;
+      --console-bg: #101018;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .badge {
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      color: var(--gold);
+      letter-spacing: 0.5px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--gold);
+    }
+    .btn {
+      background: var(--border);
+      color: var(--text);
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.95rem;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+      color: #fff;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    select, input {
+      width: 100%;
+      background: var(--console-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+    select:focus, input:focus {
+      outline: none;
+      border-color: var(--gold);
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: bold;
+      background: #444;
+    }
+    .status-connected { background: var(--success); color: #000; }
+    .status-disconnected { background: #555; color: #bbb; }
+
+    /* Progress bar */
+    .progress-box {
+      margin: 16px 0;
+      display: none;
+    }
+    .progress-bar-bg {
+      background: var(--console-bg);
+      border-radius: 6px;
+      height: 14px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .progress-bar {
+      background: var(--accent);
+      height: 100%;
+      width: 0%;
+      transition: width 0.1s linear;
+    }
+    .progress-label {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-align: right;
+    }
+
+    /* Console */
+    .console-card {
+      margin-top: 20px;
+    }
+    .console-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    #consoleLog {
+      background: var(--console-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 0.85rem;
+      color: #9feaf9;
+      height: 180px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    /* CHR Preview */
+    .preview-card {
+      margin-top: 20px;
+    }
+    #chrCanvas {
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      image-rendering: pixelated;
+      max-width: 100%;
+      display: block;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <span class="badge">FC 60P</span>
+        <h1>NES ROM Dumper (Arduino Mega)</h1>
+      </div>
+      <div>
+        <span id="connStatus" class="status-badge status-disconnected">未接続</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- 接続 & テストカード -->
+      <div class="card">
+        <h2>🔌 1. 接続 & テスト</h2>
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <button id="btnConnect" class="btn btn-primary">シリアルポート接続</button>
+          <button id="btnDisconnect" class="btn" disabled>切断</button>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px;">
+          Arduino Mega 2560 が接続されたCOMポート（例: COM3）を選択してください。
+        </p>
+        <button id="btnTest" class="btn" disabled>カートリッジ疎通テスト (TEST)</button>
+      </div>
+
+      <!-- カートリッジ設定 & 吸い出しカード -->
+      <div class="card">
+        <h2>🎮 2. 吸い出し設定</h2>
+        <div class="form-group">
+          <label>タイトルプリセット</label>
+          <select id="presetSelect">
+            <option value="ninjakun">忍者くん 魔城の冒険 (NROM-128 / 16KB PRG + 8KB CHR)</option>
+            <option value="nrom256">NROM-256 (32KB PRG + 8KB CHR) 例: マリオ等</option>
+            <option value="custom">カスタム設定</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>ファイル名 (.nes)</label>
+          <input type="text" id="outFileName" value="ninjakun_majou.nes">
+        </div>
+        <div id="customSettings" style="display: none;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="form-group">
+              <label>PRG-ROM (KB)</label>
+              <select id="prgSize">
+                <option value="16">16 KB ($C000-$FFFF)</option>
+                <option value="32">32 KB ($8000-$FFFF)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>CHR-ROM (KB)</label>
+              <select id="chrSize">
+                <option value="8">8 KB ($0000-$1FFF)</option>
+                <option value="0">0 KB (CHR-RAM)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>ミラーリング</label>
+            <select id="mirroring">
+              <option value="1">Vertical (忍者くん, マリオ等)</option>
+              <option value="0">Horizontal</option>
+            </select>
+          </div>
+        </div>
+
+        <button id="btnDump" class="btn btn-primary" style="width: 100%; margin-top: 10px;" disabled>
+          ROM吸い出し開始 (.nes生成)
+        </button>
+
+        <div id="progressBox" class="progress-box">
+          <div class="progress-bar-bg">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <div id="progressLabel" class="progress-label">0%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHR グラフィックプレビュー -->
+    <div class="card preview-card">
+      <h2>🖼️ CHR キャラクタプレビュー (2bpp Tile Viewer)</h2>
+      <p style="font-size: 0.85rem; color: var(--text-dim);">
+        吸い出したCHR-ROM（8KB = 512タイル）のパターンテーブル画像です。正常に吸い出せていればキャラクタが確認できます。
+      </p>
+      <canvas id="chrCanvas" width="256" height="128"></canvas>
+    </div>
+
+    <!-- コンソールログ -->
+    <div class="card console-card">
+      <div class="console-header">
+        <h2>💻 ログ & デバッグ出力</h2>
+        <button id="btnClearLog" class="btn" style="padding: 4px 8px; font-size: 0.75rem;">クリア</button>
+      </div>
+      <div id="consoleLog"></div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let port = null;
+    let reader = null;
+    let writer = null;
+    let isConnected = false;
+
+    // Elements
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const btnTest = document.getElementById('btnTest');
+    const btnDump = document.getElementById('btnDump');
+    const connStatus = document.getElementById('connStatus');
+    const consoleLog = document.getElementById('consoleLog');
+    const btnClearLog = document.getElementById('btnClearLog');
+    const presetSelect = document.getElementById('presetSelect');
+    const customSettings = document.getElementById('customSettings');
+    const outFileName = document.getElementById('outFileName');
+    const prgSizeSelect = document.getElementById('prgSize');
+    const chrSizeSelect = document.getElementById('chrSize');
+    const mirroringSelect = document.getElementById('mirroring');
+    const progressBox = document.getElementById('progressBox');
+    const progressBar = document.getElementById('progressBar');
+    const progressLabel = document.getElementById('progressLabel');
+    const chrCanvas = document.getElementById('chrCanvas');
+    const chrCtx = chrCanvas.getContext('2d');
+
+    function log(msg) {
+      consoleLog.textContent += msg + '\n';
+      consoleLog.scrollTop = consoleLog.scrollHeight;
+    }
+
+    btnClearLog.addEventListener('click', () => {
+      consoleLog.textContent = '';
+    });
+
+    presetSelect.addEventListener('change', () => {
+      if (presetSelect.value === 'ninjakun') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'ninjakun_majou.nes';
+        prgSizeSelect.value = '16';
+        chrSizeSelect.value = '8';
+        mirroringSelect.value = '1';
+      } else if (presetSelect.value === 'nrom256') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'game_nrom256.nes';
+        prgSizeSelect.value = '32';
+        chrSizeSelect.value = '8';
+        mirroringSelect.value = '0';
+      } else {
+        customSettings.style.display = 'block';
+      }
+    });
+
+    // WebSerial Connect
+    btnConnect.addEventListener('click', async () => {
+      if (!('serial' in navigator)) {
+        alert('お使いのブラウザはWebSerial APIに対応していません。Google ChromeまたはMicrosoft Edgeをご利用ください。');
+        return;
+      }
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+
+        isConnected = true;
+        btnConnect.disabled = true;
+        btnDisconnect.disabled = false;
+        btnTest.disabled = false;
+        btnDump.disabled = false;
+        connStatus.textContent = '接続中';
+        connStatus.className = 'status-badge status-connected';
+        log('シリアルポートに接続しました (115200 bps)');
+
+        // Wait a bit for Arduino reset, then verify handshake
+        await new Promise(r => setTimeout(r, 1800));
+        await drainSerial(200);
+        await sendCommand('PING');
+        const pong = await readLine(2000);
+        if (pong) log('ハンドシェイク応答: ' + pong);
+      } catch (err) {
+        log('接続エラー: ' + err.message);
+      }
+    });
+
+    btnDisconnect.addEventListener('click', async () => {
+      try {
+        if (reader) { await reader.cancel(); reader = null; }
+        if (port) { await port.close(); port = null; }
+        isConnected = false;
+        btnConnect.disabled = false;
+        btnDisconnect.disabled = true;
+        btnTest.disabled = true;
+        btnDump.disabled = true;
+        connStatus.textContent = '未接続';
+        connStatus.className = 'status-badge status-disconnected';
+        log('切断しました。');
+      } catch (err) {
+        log('切断エラー: ' + err.message);
+      }
+    });
+
+    async function sendCommand(cmd) {
+      if (!port || !port.writable) return;
+      const encoder = new TextEncoder();
+      const writer = port.writable.getWriter();
+      await writer.write(encoder.encode(cmd + '\n'));
+      writer.releaseLock();
+    }
+
+    async function readLine(timeoutMs = 3000) {
+      const reader = port.readable.getReader();
+      let buffer = '';
+      const startTime = Date.now();
+      try {
+        while (Date.now() - startTime < timeoutMs) {
+          const { value, done } = await Promise.race([
+            reader.read(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 500))
+          ]).catch(() => ({ value: null, done: false }));
+
+          if (value) {
+            buffer += new TextDecoder().decode(value);
+            const nl = buffer.indexOf('\n');
+            if (nl !== -1) {
+              const line = buffer.substring(0, nl).trim();
+              reader.releaseLock();
+              return line;
+            }
+          }
+        }
+      } catch (e) {
+      } finally {
+        try { reader.releaseLock(); } catch (_) {}
+      }
+      return null;
+    }
+
+    // Test command
+    btnTest.addEventListener('click', async () => {
+      btnTest.disabled = true;
+      btnDump.disabled = true;
+      log('\n--- カートリッジ疎通テストを実行中 ---');
+
+      try {
+        await sendCommand('TEST');
+        const reader = port.readable.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < 4000) {
+          const { value, done } = await Promise.race([
+            reader.read(),
+            new Promise(r => setTimeout(r, 400)).then(() => ({ value: null, done: false }))
+          ]);
+          if (value) {
+            const text = decoder.decode(value);
+            buffer += text;
+            log(text.trimEnd());
+            if (buffer.includes('TEST COMPLETE')) break;
+          }
+        }
+        reader.releaseLock();
+      } catch (err) {
+        log('テストエラー: ' + err.message);
+      } finally {
+        btnTest.disabled = false;
+        btnDump.disabled = false;
+      }
+    });
+
+    async function drainSerial(durationMs = 150) {
+      if (!port || !port.readable) return;
+      const reader = port.readable.getReader();
+      const start = Date.now();
+      try {
+        while (Date.now() - start < durationMs) {
+          const remain = Math.max(20, durationMs - (Date.now() - start));
+          const { value } = await Promise.race([
+            reader.read(),
+            new Promise(r => setTimeout(() => r({ value: null }), remain))
+          ]);
+          if (!value) break;
+        }
+      } catch (_) {
+      } finally {
+        try { reader.releaseLock(); } catch (_) {}
+      }
+    }
+
+    // Byte-preserving buffered reader so binary bytes following '\n' in the same USB packet are never lost
+    class BufferedSerialReader {
+      constructor(readable) {
+        this.reader = readable.getReader();
+        this.queue = new Uint8Array(0);
+      }
+
+      _append(chunk) {
+        if (!chunk || chunk.length === 0) return;
+        const next = new Uint8Array(this.queue.length + chunk.length);
+        next.set(this.queue, 0);
+        next.set(chunk, this.queue.length);
+        this.queue = next;
+      }
+
+      async readLine(timeoutMs = 5000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const nlIdx = this.queue.indexOf(0x0A); // '\n'
+          if (nlIdx !== -1) {
+            const lineBytes = this.queue.subarray(0, nlIdx);
+            this.queue = this.queue.subarray(nlIdx + 1);
+            return new TextDecoder().decode(lineBytes).replace(/^[\r+]+|\r+$/g, '').trim();
+          }
+          const { value, done } = await Promise.race([
+            this.reader.read(),
+            new Promise(r => setTimeout(() => r({ value: null, done: false }), 500))
+          ]);
+          if (done) break;
+          if (value) this._append(value);
+        }
+        return null;
+      }
+
+      async readLineMatching(prefix, timeoutMs = 5000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const line = await this.readLine(timeoutMs - (Date.now() - start));
+          if (line === null) return null;
+          if (line.includes(prefix)) return line;
+        }
+        return null;
+      }
+
+      async readExactBytes(totalBytes, onProgress, timeoutMs = 15000) {
+        const result = new Uint8Array(totalBytes);
+        let received = 0;
+
+        if (this.queue.length > 0) {
+          const take = Math.min(totalBytes, this.queue.length);
+          result.set(this.queue.subarray(0, take), 0);
+          this.queue = this.queue.subarray(take);
+          received += take;
+          if (onProgress) onProgress(received, totalBytes);
+        }
+
+        const start = Date.now();
+        while (received < totalBytes) {
+          if (Date.now() - start > timeoutMs) {
+            throw new Error(`バイナリ受信タイムアウト (${received}/${totalBytes} bytes)`);
+          }
+          const { value, done } = await Promise.race([
+            this.reader.read(),
+            new Promise(r => setTimeout(() => r({ value: null, done: false }), 1000))
+          ]);
+          if (done) break;
+          if (value && value.length > 0) {
+            const needed = totalBytes - received;
+            if (value.length <= needed) {
+              result.set(value, received);
+              received += value.length;
+            } else {
+              result.set(value.subarray(0, needed), received);
+              received += needed;
+              this._append(value.subarray(needed));
+            }
+            if (onProgress) onProgress(received, totalBytes);
+          }
+        }
+        return result;
+      }
+
+      release() {
+        try { this.reader.releaseLock(); } catch (_) {}
+      }
+    }
+
+    function computeCrc32Hex(bytes) {
+      let crc = 0xFFFFFFFF >>> 0;
+      for (let i = 0; i < bytes.length; i++) {
+        crc ^= bytes[i];
+        for (let j = 0; j < 8; j++) {
+          crc = (crc & 1) ? ((crc >>> 1) ^ 0xEDB88320) >>> 0 : (crc >>> 1);
+        }
+      }
+      return ((~crc) >>> 0).toString(16).toUpperCase().padStart(8, '0');
+    }
+
+    // Dump Button
+    btnDump.addEventListener('click', async () => {
+      btnTest.disabled = true;
+      btnDump.disabled = true;
+      progressBox.style.display = 'block';
+
+      let bufReader = null;
+      try {
+        const prgKB = parseInt(prgSizeSelect.value, 10);
+        const chrKB = parseInt(chrSizeSelect.value, 10);
+        const mirroring = parseInt(mirroringSelect.value, 10); // 1 = Vertical, 0 = Horizontal
+
+        const prgBytesTotal = prgKB * 1024;
+        const chrBytesTotal = chrKB * 1024;
+        const prgStartAddr = (prgKB === 16) ? 0xC000 : 0x8000;
+
+        log(`\n========================================`);
+        log(`吸い出し開始: PRG ${prgKB}KB (開始: $${prgStartAddr.toString(16).toUpperCase()}), CHR ${chrKB}KB`);
+
+        await drainSerial(150);
+        bufReader = new BufferedSerialReader(port.readable);
+
+        // 1. Read PRG-ROM via 'R <addr> <len>' (with hardware CRC32 check)
+        progressLabel.textContent = `PRG-ROM (${prgKB}KB) を吸い出し中...`;
+        progressBar.style.width = '0%';
+
+        const prgCmd = `R ${prgStartAddr.toString(16).toUpperCase()} ${prgBytesTotal.toString(16).toUpperCase()}`;
+        await sendCommand(prgCmd);
+
+        const prgHdr = await bufReader.readLineMatching('OK ', 5000);
+        if (!prgHdr) throw new Error('PRG開始応答 (OK) が受信できませんでした');
+        log(`PRG応答: ${prgHdr}`);
+
+        const prgData = await bufReader.readExactBytes(prgBytesTotal, (done, total) => {
+          const pct = Math.floor((done / total) * 50);
+          progressBar.style.width = `${pct}%`;
+          progressLabel.textContent = `PRG: ${done} / ${total} bytes (${pct * 2}%)`;
+        });
+
+        const prgCrcLine = await bufReader.readLineMatching('CRC ', 3000);
+        const jsPrgCrc = computeCrc32Hex(prgData);
+        log(`PRG-ROM 完了 (${prgData.length} bytes) | CRC32: ${jsPrgCrc} (${prgCrcLine || 'N/A'})`);
+
+        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>'
+        let chrData = new Uint8Array(0);
+        let jsChrCrc = 'N/A';
+        if (chrBytesTotal > 0) {
+          log(`CHR-ROM (${chrKB}KB) を吸い出し中...`);
+          const chrCmd = `C 0000 ${chrBytesTotal.toString(16).toUpperCase()}`;
+          await sendCommand(chrCmd);
+
+          const chrHdr = await bufReader.readLineMatching('OK ', 5000);
+          if (!chrHdr) throw new Error('CHR開始応答 (OK) が受信できませんでした');
+          log(`CHR応答: ${chrHdr}`);
+
+          chrData = await bufReader.readExactBytes(chrBytesTotal, (done, total) => {
+            const pct = 50 + Math.floor((done / total) * 50);
+            progressBar.style.width = `${pct}%`;
+            progressLabel.textContent = `CHR: ${done} / ${total} bytes (${pct}%)`;
+          });
+
+          const chrCrcLine = await bufReader.readLineMatching('CRC ', 3000);
+          jsChrCrc = computeCrc32Hex(chrData);
+          log(`CHR-ROM 完了 (${chrData.length} bytes) | CRC32: ${jsChrCrc} (${chrCrcLine || 'N/A'})`);
+
+          // Preview CHR
+          renderChrTiles(chrData);
+        }
+
+        bufReader.release();
+        bufReader = null;
+
+        progressBar.style.width = '100%';
+        progressLabel.textContent = '完了！iNESファイルを生成しています...';
+
+        // 3. Build iNES file
+        const inesHeader = new Uint8Array(16);
+        inesHeader[0] = 0x4E; // 'N'
+        inesHeader[1] = 0x45; // 'E'
+        inesHeader[2] = 0x53; // 'S'
+        inesHeader[3] = 0x1A; // EOF
+        inesHeader[4] = prgKB / 16; // 16KB PRG units
+        inesHeader[5] = chrKB / 8;  // 8KB CHR units
+        inesHeader[6] = (mirroring & 0x01); // Mapper 0 lower nibble + Mirroring
+        inesHeader[7] = 0x00; // Mapper 0 upper nibble
+
+        const totalNesSize = 16 + prgData.length + chrData.length;
+        const nesRom = new Uint8Array(totalNesSize);
+        nesRom.set(inesHeader, 0);
+        nesRom.set(prgData, 16);
+        nesRom.set(chrData, 16 + prgData.length);
+
+        const combinedPayload = nesRom.subarray(16);
+        const combinedCrc = computeCrc32Hex(combinedPayload);
+        log(`Combined ROM CRC32: ${combinedCrc}`);
+        log(`\n🎉 吸い出し成功！ 合計サイズ: ${nesRom.length} bytes`);
+        downloadBlob(nesRom, outFileName.value || 'famicom_rom.nes');
+      } catch (err) {
+        log('❌ 吸い出し中にエラーが発生しました: ' + err.message);
+      } finally {
+        if (bufReader) bufReader.release();
+        btnTest.disabled = false;
+        btnDump.disabled = false;
+      }
+    });
+
+    function downloadBlob(data, filename) {
+      const blob = new Blob([data], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      log(`📥 ファイルをダウンロードしました: ${filename}`);
+    }
+
+    // Render CHR 8x8 tiles (2bpp NES format)
+    // 1 tile = 16 bytes.
+    // Plane 0: bytes 0..7, Plane 1: bytes 8..15
+    function renderChrTiles(chrBytes) {
+      const numTiles = Math.min(512, Math.floor(chrBytes.length / 16));
+      chrCtx.fillStyle = '#000000';
+      chrCtx.fillRect(0, 0, 256, 128);
+
+      const colors = [
+        [0, 0, 0],       // Color 0: Black
+        [229, 37, 33],   // Color 1: Famicom Red
+        [212, 175, 55],  // Color 2: Gold
+        [255, 255, 255]  // Color 3: White
+      ];
+
+      const imgData = chrCtx.createImageData(256, 128);
+      const d = imgData.data;
+
+      // 32 tiles per row (32 * 8 = 256px), 16 rows (16 * 8 = 128px)
+      for (let t = 0; t < numTiles; t++) {
+        const tileOffset = t * 16;
+        const tileCol = t % 32;
+        const tileRow = Math.floor(t / 32);
+
+        for (let y = 0; y < 8; y++) {
+          const plane0 = chrBytes[tileOffset + y];
+          const plane1 = chrBytes[tileOffset + 8 + y];
+
+          for (let x = 0; x < 8; x++) {
+            const bit = 7 - x;
+            const c0 = (plane0 >> bit) & 1;
+            const c1 = (plane1 >> bit) & 1;
+            const colIdx = (c1 << 1) | c0;
+
+            const px = (tileCol * 8) + x;
+            const py = (tileRow * 8) + y;
+            const idx = (py * 256 + px) * 4;
+
+            const rgb = colors[colIdx];
+            d[idx + 0] = rgb[0];
+            d[idx + 1] = rgb[1];
+            d[idx + 2] = rgb[2];
+            d[idx + 3] = 255;
+          }
+        }
+      }
+      chrCtx.putImageData(imgData, 0, 0);
+      log('キャラクタプレビューを描画しました。');
+    }
+  </script>
+</body>
+</html>
