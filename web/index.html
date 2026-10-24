@@ -238,8 +238,9 @@
           <select id="presetSelect">
             <option value="ninjakun">忍者くん 魔城の冒険 (NROM-128 / 16KB PRG + 8KB CHR)</option>
             <option value="starsoldier">スターソルジャー (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
-            <option value="mighty" selected>マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
+            <option value="mighty">マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
             <option value="mighty_mapper185">マイティボンジャック (原本仕様 Mapper 185 / 32KB PRG + 8KB CHR)</option>
+            <option value="smb3" selected>スーパーマリオブラザーズ3 (Mapper 4 MMC3 / 256KB PRG + 128KB CHR)</option>
             <option value="nrom256">NROM-256 (32KB PRG + 8KB CHR) 例: マリオ等</option>
             <option value="custom">カスタム設定</option>
           </select>
@@ -255,6 +256,7 @@
               <select id="prgSize">
                 <option value="16">16 KB ($C000-$FFFF)</option>
                 <option value="32">32 KB ($8000-$FFFF)</option>
+                <option value="256">256 KB (MMC3等 バンク切替)</option>
               </select>
             </div>
             <div class="form-group">
@@ -263,6 +265,7 @@
                 <option value="8">8 KB ($0000-$1FFF)</option>
                 <option value="16">16 KB (2バンク)</option>
                 <option value="32">32 KB (4バンク)</option>
+                <option value="128">128 KB (MMC3等 16バンク)</option>
                 <option value="0">0 KB (CHR-RAM)</option>
               </select>
             </div>
@@ -273,6 +276,7 @@
               <select id="mapperSelect">
                 <option value="0">Mapper 0 (NROM)</option>
                 <option value="3">Mapper 3 (CNROM バンク切替)</option>
+                <option value="4">Mapper 4 (MMC3)</option>
                 <option value="185">Mapper 185 (CNROM セキュリティプロテクト)</option>
               </select>
             </div>
@@ -385,6 +389,13 @@
         chrSizeSelect.value = '8';
         mapperSelect.value = '185'; // Original Mapper 185
         mirroringSelect.value = '0'; // Horizontal Mirroring
+      } else if (presetSelect.value === 'smb3') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'super_mario_bros_3.nes';
+        prgSizeSelect.value = '256';
+        chrSizeSelect.value = '128';
+        mapperSelect.value = '4'; // MMC3
+        mirroringSelect.value = '0'; // Horizontal
       } else if (presetSelect.value === 'nrom256') {
         customSettings.style.display = 'none';
         outFileName.value = 'game_nrom256.nes';
@@ -657,68 +668,172 @@
         await drainSerial(150);
         bufReader = new BufferedSerialReader(port.readable);
 
-        // 1. Read PRG-ROM via 'R <addr> <len>' (with hardware CRC32 check)
+        // 1. Read PRG-ROM
+        let prgData = new Uint8Array(prgBytesTotal);
         progressLabel.textContent = `PRG-ROM (${prgKB}KB) を吸い出し中...`;
         progressBar.style.width = '0%';
 
-        const prgCmd = `R ${prgStartAddr.toString(16).toUpperCase()} ${prgBytesTotal.toString(16).toUpperCase()}`;
-        await sendCommand(prgCmd);
+        if (mapper === 4) {
+          // MMC3 PRG-ROM Dump (e.g. 256KB = 32 x 8KB banks)
+          // Banks 0..numBanks-3 are read in 16KB pairs via R6 ($8000-$9FFF) and R7 ($A000-$BFFF)
+          const numBanks = prgKB / 8;
+          const numPairs = (numBanks - 2) / 2;
+          log(`MMC3 PRG-ROM (${prgKB}KB / ${numBanks}バンク) バンク切り替え吸い出し中...`);
 
-        const prgHdr = await bufReader.readLineMatching('OK ', 5000);
-        if (!prgHdr) throw new Error('PRG開始応答 (OK) が受信できませんでした');
-        log(`PRG応答: ${prgHdr}`);
+          // Disable PRG-RAM write protect just in case
+          await sendCommand('P A001 00');
+          await new Promise(r => setTimeout(r, 20));
+          await bufReader.readLine(500);
 
-        const prgData = await bufReader.readExactBytes(prgBytesTotal, (done, total) => {
-          const pct = Math.floor((done / total) * 50);
-          progressBar.style.width = `${pct}%`;
-          progressLabel.textContent = `PRG: ${done} / ${total} bytes (${pct * 2}%)`;
-        });
+          for (let p = 0; p < numPairs; p++) {
+            const b6 = p * 2;
+            const b7 = p * 2 + 1;
+            // Select R6, write bank b6
+            await sendCommand('P 8000 06');
+            await new Promise(r => setTimeout(r, 10));
+            await bufReader.readLine(500);
+            await sendCommand(`P 8001 ${b6.toString(16).padStart(2, '0')}`);
+            await new Promise(r => setTimeout(r, 10));
+            await bufReader.readLine(500);
 
-        const prgCrcLine = await bufReader.readLineMatching('CRC ', 3000);
+            // Select R7, write bank b7
+            await sendCommand('P 8000 07');
+            await new Promise(r => setTimeout(r, 10));
+            await bufReader.readLine(500);
+            await sendCommand(`P 8001 ${b7.toString(16).padStart(2, '0')}`);
+            await new Promise(r => setTimeout(r, 10));
+            await bufReader.readLine(500);
+
+            // Read 16KB ($8000-$BFFF)
+            await sendCommand('R 8000 4000');
+            const hdr = await bufReader.readLineMatching('OK ', 5000);
+            if (!hdr) throw new Error(`PRG ペア ${p} 開始応答が受信できませんでした`);
+            const chunk = await bufReader.readExactBytes(16384, (done, total) => {
+              const currentTotal = (p * 16384) + done;
+              const pct = Math.floor((currentTotal / prgBytesTotal) * 50);
+              progressBar.style.width = `${pct}%`;
+              progressLabel.textContent = `PRG: ${currentTotal} / ${prgBytesTotal} bytes (${pct * 2}%)`;
+            });
+            prgData.set(chunk, p * 16384);
+            await bufReader.readLineMatching('CRC ', 3000);
+          }
+
+          // Read fixed 16KB ($C000-$FFFF)
+          await sendCommand('R C000 4000');
+          const hdrFixed = await bufReader.readLineMatching('OK ', 5000);
+          if (!hdrFixed) throw new Error(`PRG 固定バンク開始応答が受信できませんでした`);
+          const fixedChunk = await bufReader.readExactBytes(16384, (done, total) => {
+            const currentTotal = (numPairs * 16384) + done;
+            const pct = Math.floor((currentTotal / prgBytesTotal) * 50);
+            progressBar.style.width = `${pct}%`;
+            progressLabel.textContent = `PRG: ${currentTotal} / ${prgBytesTotal} bytes (${pct * 2}%)`;
+          });
+          prgData.set(fixedChunk, numPairs * 16384);
+          await bufReader.readLineMatching('CRC ', 3000);
+        } else {
+          // Standard PRG Read (NROM / CNROM)
+          const prgCmd = `R ${prgStartAddr.toString(16).toUpperCase()} ${prgBytesTotal.toString(16).toUpperCase()}`;
+          await sendCommand(prgCmd);
+
+          const prgHdr = await bufReader.readLineMatching('OK ', 5000);
+          if (!prgHdr) throw new Error('PRG開始応答 (OK) が受信できませんでした');
+          log(`PRG応答: ${prgHdr}`);
+
+          prgData = await bufReader.readExactBytes(prgBytesTotal, (done, total) => {
+            const pct = Math.floor((done / total) * 50);
+            progressBar.style.width = `${pct}%`;
+            progressLabel.textContent = `PRG: ${done} / ${total} bytes (${pct * 2}%)`;
+          });
+
+          await bufReader.readLineMatching('CRC ', 3000);
+        }
+
         const jsPrgCrc = computeCrc32Hex(prgData);
-        log(`PRG-ROM 完了 (${prgData.length} bytes) | CRC32: ${jsPrgCrc} (${prgCrcLine || 'N/A'})`);
+        log(`PRG-ROM 完了 (${prgData.length} bytes) | CRC32: ${jsPrgCrc}`);
 
-        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>' (with bank-switching for Mapper 3 / 185)
+        // 2. Read CHR-ROM (if exists) via 'C 0000 <len>' (with bank-switching)
         let chrData = new Uint8Array(chrBytesTotal);
         let jsChrCrc = 'N/A';
         if (chrBytesTotal > 0) {
-          if (mapper === 185 || presetSelect.value.startsWith('mighty')) {
-            // Unlock Mighty Bomb Jack / Mapper 185 CHR protection
-            log('Mapper 185 CHRプロテクト解除コマンド (P 8000 11) を送信中...');
-            await sendCommand('P 8000 11');
-            await new Promise(r => setTimeout(r, 40));
-            await bufReader.readLine(1000); // drain WROK
-          }
+          if (mapper === 4) {
+            // MMC3 CHR-ROM Dump (e.g. 128KB = 16 x 8KB chunks)
+            const num8k = chrKB / 8;
+            log(`MMC3 CHR-ROM (${chrKB}KB / ${num8k}チャンク) バンク切り替え吸い出し中...`);
 
-          const numBanks = Math.max(1, Math.floor(chrBytesTotal / 8192));
-          log(`CHR-ROM (${chrKB}KB / ${numBanks}バンク) を吸い出し中...`);
+            for (let c = 0; c < num8k; c++) {
+              const base1k = c * 8;
+              // R0 (2KB at $0000)
+              await sendCommand('P 8000 00'); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              await sendCommand(`P 8001 ${base1k.toString(16).padStart(2, '0')}`); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              // R1 (2KB at $0800)
+              await sendCommand('P 8000 01'); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              await sendCommand(`P 8001 ${(base1k + 2).toString(16).padStart(2, '0')}`); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              // R2 (1KB at $1000)
+              await sendCommand('P 8000 02'); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              await sendCommand(`P 8001 ${(base1k + 4).toString(16).padStart(2, '0')}`); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              // R3 (1KB at $1400)
+              await sendCommand('P 8000 03'); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              await sendCommand(`P 8001 ${(base1k + 5).toString(16).padStart(2, '0')}`); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              // R4 (1KB at $1800)
+              await sendCommand('P 8000 04'); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              await sendCommand(`P 8001 ${(base1k + 6).toString(16).padStart(2, '0')}`); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              // R5 (1KB at $1C00)
+              await sendCommand('P 8000 05'); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
+              await sendCommand(`P 8001 ${(base1k + 7).toString(16).padStart(2, '0')}`); await new Promise(r => setTimeout(r, 6)); await bufReader.readLine(500);
 
-          for (let b = 0; b < numBanks; b++) {
-            if (numBanks > 1 || mapper === 3) {
-              // Switch CNROM CHR bank (write to $8000)
-              const bankHex = b.toString(16).padStart(2, '0');
-              await sendCommand(`P 8000 ${bankHex}`);
+              // Read 8KB ($0000-$1FFF)
+              await sendCommand('C 0000 2000');
+              const chrHdr = await bufReader.readLineMatching('OK ', 5000);
+              if (!chrHdr) throw new Error(`CHR チャンク ${c} 開始応答がありません`);
+
+              const chunk = await bufReader.readExactBytes(8192, (done, total) => {
+                const currentTotal = (c * 8192) + done;
+                const pct = 50 + Math.floor((currentTotal / chrBytesTotal) * 50);
+                progressBar.style.width = `${pct}%`;
+                progressLabel.textContent = `CHR チャンク ${c+1}/${num8k}: ${currentTotal} / ${chrBytesTotal} bytes (${pct}%)`;
+              });
+              chrData.set(chunk, c * 8192);
+              await bufReader.readLineMatching('CRC ', 3000);
+            }
+          } else {
+            if (mapper === 185 || presetSelect.value.startsWith('mighty')) {
+              // Unlock Mighty Bomb Jack / Mapper 185 CHR protection
+              log('Mapper 185 CHRプロテクト解除コマンド (P 8000 11) を送信中...');
+              await sendCommand('P 8000 11');
               await new Promise(r => setTimeout(r, 40));
               await bufReader.readLine(1000); // drain WROK
             }
 
-            const chrCmd = `C 0000 2000`;
-            await sendCommand(chrCmd);
+            const numBanks = Math.max(1, Math.floor(chrBytesTotal / 8192));
+            log(`CHR-ROM (${chrKB}KB / ${numBanks}バンク) を吸い出し中...`);
 
-            const chrHdr = await bufReader.readLineMatching('OK ', 5000);
-            if (!chrHdr) throw new Error(`CHR バンク ${b} 開始応答 (OK) が受信できませんでした`);
+            for (let b = 0; b < numBanks; b++) {
+              if (numBanks > 1 || mapper === 3) {
+                // Switch CNROM CHR bank (write to $8000)
+                const bankHex = b.toString(16).padStart(2, '0');
+                await sendCommand(`P 8000 ${bankHex}`);
+                await new Promise(r => setTimeout(r, 40));
+                await bufReader.readLine(1000); // drain WROK
+              }
 
-            const bankChunk = await bufReader.readExactBytes(8192, (done, total) => {
-              const currentTotal = (b * 8192) + done;
-              const pct = 50 + Math.floor((currentTotal / chrBytesTotal) * 50);
-              progressBar.style.width = `${pct}%`;
-              progressLabel.textContent = `CHR バンク ${b+1}/${numBanks}: ${currentTotal} / ${chrBytesTotal} bytes (${pct}%)`;
-            });
+              const chrCmd = `C 0000 2000`;
+              await sendCommand(chrCmd);
 
-            chrData.set(bankChunk, b * 8192);
+              const chrHdr = await bufReader.readLineMatching('OK ', 5000);
+              if (!chrHdr) throw new Error(`CHR バンク ${b} 開始応答 (OK) が受信できませんでした`);
 
-            const bankCrcLine = await bufReader.readLineMatching('CRC ', 3000);
-            log(`  -> バンク ${b} (8KB) 完了 | ${bankCrcLine || ''}`);
+              const bankChunk = await bufReader.readExactBytes(8192, (done, total) => {
+                const currentTotal = (b * 8192) + done;
+                const pct = 50 + Math.floor((currentTotal / chrBytesTotal) * 50);
+                progressBar.style.width = `${pct}%`;
+                progressLabel.textContent = `CHR バンク ${b+1}/${numBanks}: ${currentTotal} / ${chrBytesTotal} bytes (${pct}%)`;
+              });
+
+              chrData.set(bankChunk, b * 8192);
+
+              const bankCrcLine = await bufReader.readLineMatching('CRC ', 3000);
+              log(`  -> バンク ${b} (8KB) 完了 | ${bankCrcLine || ''}`);
+            }
           }
 
           jsChrCrc = computeCrc32Hex(chrData);
