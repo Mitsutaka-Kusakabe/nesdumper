@@ -358,6 +358,248 @@ void cmd_scan() {
   Serial.println(F("=== SCAN COMPLETE ==="));
 }
 
+struct WirePin {
+  uint8_t pin;
+  const char* label;
+  const char* name;
+};
+
+static const WirePin WIRE_PINS[] = {
+  { 22,  "A18", "CPU_A0" },
+  { A6,  "A19", "CPU_A1" },
+  { A5,  "A20", "CPU_A2" },
+  { A4,  "A21", "CPU_A3" },
+  { A3,  "A22", "CPU_A4" },
+  { A2,  "A23", "CPU_A5" },
+  { A1,  "A24", "CPU_A6" },
+  { A0,  "A25", "CPU_A7" },
+  { 5,   "A26", "CPU_A8" },
+  { 6,   "A27", "CPU_A9" },
+  { 7,   "A28", "CPU_A10" },
+  { 8,   "A29", "CPU_A11" },
+  { 11,  "B28", "CPU_A12" },
+  { 12,  "B27", "CPU_A13" },
+  { A13, "B26", "CPU_A14" },
+  { 49,  "B18", "CPU_D0" },
+  { A14, "B19", "CPU_D1" },
+  { A7,  "B20", "CPU_D2" },
+  { A8,  "B21", "CPU_D3" },
+  { A9,  "B22", "CPU_D4" },
+  { A10, "B23", "CPU_D5" },
+  { A11, "B24", "CPU_D6" },
+  { A12, "B25", "CPU_D7" },
+  { 13,  "A17", "CPU_RW" },
+  { 10,  "B29", "M2" },
+  { 14,  "B17", "ROMSEL" },
+  { 29,  "A6",  "PPU_A0" },
+  { 28,  "A7",  "PPU_A1" },
+  { 27,  "A8",  "PPU_A2" },
+  { 26,  "A9",  "PPU_A3" },
+  { 25,  "A10", "PPU_A4" },
+  { 24,  "A11", "PPU_A5" },
+  { 23,  "A12", "PPU_A6" },
+  { 47,  "B11", "PPU_A7" },
+  { 46,  "B10", "PPU_A8" },
+  { 45,  "B9",  "PPU_A9" },
+  { 44,  "B8",  "PPU_A10" },
+  { 43,  "B7",  "PPU_A11" },
+  { 42,  "B6",  "PPU_A12" },
+  { 31,  "B5",  "PPU_A13" },
+  { 48,  "B12", "PPU_/A13" },
+  { 37,  "A5",  "PPU_D0" },
+  { 36,  "A4",  "PPU_D1" },
+  { 35,  "A3",  "PPU_D2" },
+  { 34,  "A2",  "PPU_D3" },
+  { 9,   "B1",  "PPU_D4" },
+  { 4,   "B2",  "PPU_D5" },
+  { 33,  "B3",  "PPU_D6" },
+  { 32,  "B4",  "PPU_D7" },
+  { 3,   "A14", "PPU_/RD" }
+};
+static const int NUM_WIRE_PINS = sizeof(WIRE_PINS) / sizeof(WIRE_PINS[0]);
+
+void cmd_wirecheck() {
+  Serial.println(F("=== WIRECHECK START ==="));
+  for (int i = 0; i < NUM_WIRE_PINS; i++) {
+    pinMode(WIRE_PINS[i].pin, INPUT_PULLUP);
+  }
+  delay(10);
+
+  int gndFaults = 0;
+  for (int i = 0; i < NUM_WIRE_PINS; i++) {
+    if (digitalRead(WIRE_PINS[i].pin) == LOW) {
+      Serial.print(F("GND_FAULT:"));
+      Serial.print(WIRE_PINS[i].label); Serial.print(':');
+      Serial.print(WIRE_PINS[i].name); Serial.print(':');
+      Serial.println(WIRE_PINS[i].pin);
+      gndFaults++;
+    }
+  }
+  if (gndFaults == 0) Serial.println(F("GND_CHECK:PASS"));
+
+  int shortFaults = 0;
+  for (int i = 0; i < NUM_WIRE_PINS; i++) {
+    pinMode(WIRE_PINS[i].pin, OUTPUT);
+    digitalWrite(WIRE_PINS[i].pin, LOW);
+    delayMicroseconds(10);
+
+    for (int j = 0; j < NUM_WIRE_PINS; j++) {
+      if (i == j) continue;
+      if (digitalRead(WIRE_PINS[j].pin) == LOW) {
+        Serial.print(F("SHORT_FAULT:"));
+        Serial.print(WIRE_PINS[i].label); Serial.print(':'); Serial.print(WIRE_PINS[i].name);
+        Serial.print(F("<->"));
+        Serial.print(WIRE_PINS[j].label); Serial.print(':'); Serial.println(WIRE_PINS[j].name);
+        shortFaults++;
+      }
+    }
+    pinMode(WIRE_PINS[i].pin, INPUT_PULLUP);
+  }
+  if (shortFaults == 0) Serial.println(F("SHORT_CHECK:PASS"));
+
+  safe_high_z();
+  Serial.println(F("=== WIRECHECK END ==="));
+}
+
+void cmd_probe() {
+  Serial.println(F("=== PROBE START ==="));
+  for (int i = 0; i < NUM_WIRE_PINS; i++) {
+    pinMode(WIRE_PINS[i].pin, INPUT_PULLUP);
+  }
+  delay(10);
+
+  int lastTouched = -1;
+  while (!Serial.available()) {
+    int current = -1;
+    for (int i = 0; i < NUM_WIRE_PINS; i++) {
+      if (digitalRead(WIRE_PINS[i].pin) == LOW) {
+        current = i;
+        break;
+      }
+    }
+    if (current != -1 && current != lastTouched) {
+      Serial.print(F("TOUCH:"));
+      Serial.print(WIRE_PINS[current].label); Serial.print(':');
+      Serial.print(WIRE_PINS[current].name); Serial.print(':');
+      Serial.println(WIRE_PINS[current].pin);
+      delay(30);
+    }
+    lastTouched = current;
+    delay(5);
+  }
+  while (Serial.available()) Serial.read();
+  safe_high_z();
+  Serial.println(F("=== PROBE END ==="));
+}
+
+void cmd_pincheck() {
+  enable_bus();
+  delayMicroseconds(50);
+  Serial.println(F("=== PINCHECK START ==="));
+
+  // 1. CPU Data Bus Bit Distribution
+  uint16_t ones[8] = {0};
+  uint16_t zeros[8] = {0};
+  for (uint16_t i = 0; i < 256; i++) {
+    uint8_t val = read_prg_byte(0xC000 + i);
+    for (int b = 0; b < 8; b++) {
+      if ((val >> b) & 1) ones[b]++;
+      else zeros[b]++;
+    }
+  }
+
+  static const char* cpu_d_labels[8] = { "B18", "B19", "B20", "B21", "B22", "B23", "B24", "B25" };
+  static const char* cpu_d_pins[8] = { "D49", "A14", "A7", "A8", "A9", "A10", "A11", "A12" };
+  for (int b = 0; b < 8; b++) {
+    Serial.print(F("PIN:CPU_D"));
+    Serial.print(b);
+    if (zeros[b] == 0) {
+      Serial.print(F(":FAIL_STUCK_HIGH:"));
+      Serial.print(cpu_d_labels[b]); Serial.print(':'); Serial.println(cpu_d_pins[b]);
+    } else if (ones[b] == 0) {
+      Serial.print(F(":FAIL_STUCK_LOW:"));
+      Serial.print(cpu_d_labels[b]); Serial.print(':'); Serial.println(cpu_d_pins[b]);
+    } else {
+      Serial.println(F(":PASS"));
+    }
+  }
+
+  // 2. CPU Address Lines Aliasing Check
+  static const char* cpu_a_labels[14] = { "A18", "A19", "A20", "A21", "A22", "A23", "A24", "A25", "A26", "A27", "A28", "A29", "B28", "B27" };
+  static const char* cpu_a_pins[14]   = { "D22", "A6", "A5", "A4", "A3", "A2", "A1", "A0", "D5", "D6", "D7", "D8", "D11", "D12" };
+  for (int b = 0; b < 14; b++) {
+    uint16_t mask = (1 << b);
+    int diffCount = 0;
+    for (uint16_t sample = 0; sample < 16; sample++) {
+      uint16_t addr1 = 0xC000 + (sample * 17);
+      uint16_t addr2 = addr1 ^ mask;
+      if (read_prg_byte(addr1) != read_prg_byte(addr2)) {
+        diffCount++;
+      }
+    }
+    Serial.print(F("PIN:CPU_A"));
+    Serial.print(b);
+    if (diffCount == 0) {
+      Serial.print(F(":FAIL_ALIAS:"));
+      Serial.print(cpu_a_labels[b]); Serial.print(':'); Serial.println(cpu_a_pins[b]);
+    } else {
+      Serial.println(F(":PASS"));
+    }
+  }
+
+  // 3. PPU Data Bus Bit Distribution
+  uint16_t pones[8] = {0};
+  uint16_t pzeros[8] = {0};
+  for (uint16_t i = 0; i < 256; i++) {
+    uint8_t val = read_chr_byte(i);
+    for (int b = 0; b < 8; b++) {
+      if ((val >> b) & 1) pones[b]++;
+      else pzeros[b]++;
+    }
+  }
+  static const char* ppu_d_labels[8] = { "A5", "A4", "A3", "A2", "B1", "B2", "B3", "B4" };
+  static const char* ppu_d_pins[8]   = { "D37", "D36", "D35", "D34", "D9", "D4", "D33", "D32" };
+  for (int b = 0; b < 8; b++) {
+    Serial.print(F("PIN:PPU_D"));
+    Serial.print(b);
+    if (pzeros[b] == 0) {
+      Serial.print(F(":FAIL_STUCK_HIGH:"));
+      Serial.print(ppu_d_labels[b]); Serial.print(':'); Serial.println(ppu_d_pins[b]);
+    } else if (pones[b] == 0) {
+      Serial.print(F(":FAIL_STUCK_LOW:"));
+      Serial.print(ppu_d_labels[b]); Serial.print(':'); Serial.println(ppu_d_pins[b]);
+    } else {
+      Serial.println(F(":PASS"));
+    }
+  }
+
+  // 4. PPU Address Lines Aliasing Check
+  static const char* ppu_a_labels[13] = { "A6", "A7", "A8", "A9", "A10", "A11", "A12", "B11", "B10", "B9", "B8", "B7", "B6" };
+  static const char* ppu_a_pins[13]   = { "D29", "D28", "D27", "D26", "D25", "D24", "D23", "D47", "D46", "D45", "D44", "D43", "D42" };
+  for (int b = 0; b < 13; b++) {
+    uint16_t mask = (1 << b);
+    int diffCount = 0;
+    for (uint16_t sample = 0; sample < 16; sample++) {
+      uint16_t addr1 = (sample * 17) & 0x1FFF;
+      uint16_t addr2 = addr1 ^ mask;
+      if (read_chr_byte(addr1) != read_chr_byte(addr2)) {
+        diffCount++;
+      }
+    }
+    Serial.print(F("PIN:PPU_A"));
+    Serial.print(b);
+    if (diffCount == 0) {
+      Serial.print(F(":FAIL_ALIAS:"));
+      Serial.print(ppu_a_labels[b]); Serial.print(':'); Serial.println(ppu_a_pins[b]);
+    } else {
+      Serial.println(F(":PASS"));
+    }
+  }
+
+  bus_idle();
+  Serial.println(F("=== PINCHECK END ==="));
+}
+
 void cmd_test() {
   enable_bus();
   delayMicroseconds(50);
@@ -490,6 +732,15 @@ void loop() {
       return;
     } else if (line == "TEST") {
       cmd_test();
+      return;
+    } else if (line == "PINCHECK") {
+      cmd_pincheck();
+      return;
+    } else if (line == "WIRECHECK") {
+      cmd_wirecheck();
+      return;
+    } else if (line == "PROBE") {
+      cmd_probe();
       return;
     } else if (line.startsWith("DUMP_PRG")) {
       int sp1 = line.indexOf(' ');

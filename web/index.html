@@ -229,7 +229,9 @@
         </p>
         <div style="display: flex; gap: 10px; margin-bottom: 12px;">
           <button id="btnTest" class="btn" disabled>疎通テスト (TEST)</button>
-          <button id="btnDiag" class="btn" disabled>🔍 バンク切替診断</button>
+<button id="btnPinCheck" class="btn" disabled style="border-color: #10b981; color: #10b981;">🔍 全ピン接触診断</button>
+          <button id="btnWireCheck" class="btn" disabled style="border-color: #f59e0b; color: #f59e0b;">⚡ 配線・短絡診断</button>
+          <button id="btnDiag" class="btn" disabled>🔄 バンク切替診断</button>
         </div>
       </div>
 
@@ -240,6 +242,7 @@
           <label>タイトルプリセット</label>
           <select id="presetSelect">
             <option value="ninjakun">忍者くん 魔城の冒険 (NROM-128 / 16KB PRG + 8KB CHR)</option>
+<option value="mahjong4">4人打ち麻雀 (NROM-128 / 16KB PRG + 8KB CHR / 垂直ミラー)</option>
             <option value="starsoldier">スターソルジャー (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
             <option value="mighty">マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
             <option value="mighty_mapper185">マイティボンジャック (原本仕様 Mapper 185 / 32KB PRG + 8KB CHR)</option>
@@ -341,6 +344,8 @@
     const btnConnect = document.getElementById('btnConnect');
     const btnDisconnect = document.getElementById('btnDisconnect');
     const btnTest = document.getElementById('btnTest');
+    const btnPinCheck = document.getElementById('btnPinCheck');
+    const btnWireCheck = document.getElementById('btnWireCheck');
     const btnDiag = document.getElementById('btnDiag');
     const btnDump = document.getElementById('btnDump');
     const connStatus = document.getElementById('connStatus');
@@ -377,6 +382,13 @@
         chrSizeSelect.value = '8';
         mapperSelect.value = '0';
         mirroringSelect.value = '1';
+      } else if (presetSelect.value === 'mahjong4') {
+        customSettings.style.display = 'none';
+        outFileName.value = '4nin_uchi_mahjong.nes';
+        prgSizeSelect.value = '16';
+        chrSizeSelect.value = '8';
+        mapperSelect.value = '0';
+        mirroringSelect.value = '1'; // Vertical
       } else if (presetSelect.value === 'starsoldier') {
         customSettings.style.display = 'none';
         outFileName.value = 'star_soldier.nes';
@@ -448,7 +460,7 @@
         btnConnect.disabled = true;
         btnDisconnect.disabled = false;
         btnTest.disabled = false;
-        btnDiag.disabled = false;
+        btnPinCheck.disabled = false; btnWireCheck.disabled = false; btnDiag.disabled = false;
         btnDump.disabled = false;
         connStatus.textContent = '接続中';
         connStatus.className = 'status-badge status-connected';
@@ -473,7 +485,7 @@
         btnConnect.disabled = false;
         btnDisconnect.disabled = true;
         btnTest.disabled = true;
-        btnDiag.disabled = true;
+        btnPinCheck.disabled = true; btnWireCheck.disabled = true; btnDiag.disabled = true;
         btnDump.disabled = true;
         connStatus.textContent = '未接続';
         connStatus.className = 'status-badge status-disconnected';
@@ -549,6 +561,135 @@
         log('テストエラー: ' + err.message);
       } finally {
         btnTest.disabled = false;
+        btnPinCheck.disabled = false; btnWireCheck.disabled = false; btnDiag.disabled = false;
+        btnDump.disabled = false;
+      }
+    });
+
+    // Cartridge Live Pin Contact Diagnostics
+    btnPinCheck.addEventListener('click', async () => {
+      btnTest.disabled = true;
+      btnPinCheck.disabled = true;
+      btnWireCheck.disabled = true;
+      btnDiag.disabled = true;
+      btnDump.disabled = true;
+      log('\n========================================');
+      log('🔍 カセット全ピン接触・導通診断を開始します...');
+
+      let bufReader = null;
+      try {
+        await drainSerial(150);
+        bufReader = new BufferedSerialReader(port.readable);
+        await sendCommand('PINCHECK');
+
+        const hdr = await bufReader.readLineMatching('=== PINCHECK START ===', 5000);
+        if (!hdr) throw new Error('診断開始応答を受信できませんでした');
+
+        const fails = [];
+        let totalCount = 0;
+        let passCount = 0;
+
+        while (true) {
+          const line = await bufReader.readLine(3000);
+          if (!line || line.includes('=== PINCHECK END ===')) break;
+          if (line.startsWith('PIN:')) {
+            totalCount++;
+            const parts = line.split(':');
+            const pinName = parts[1];
+            const status = parts[2];
+            if (status === 'PASS') {
+              passCount++;
+            } else {
+              const label = parts[3] || '';
+              const pin = parts[4] || '';
+              fails.push({ name: pinName, status, label, pin });
+            }
+          }
+        }
+
+        log('\n--- 診断結果サマリー ---');
+        log(`検査ピン数: ${totalCount} 本 | 正常: ${passCount} 本 | 異常: ${fails.length} 本`);
+
+        if (fails.length === 0) {
+          log('🎉 【判定: ALL PASS】すべてのデータ線・アドレス線が正常に導通しています！');
+          log('   カセットの接触は万全です。安全に吸い出しを開始できます。');
+        } else {
+          log('⚠️ 【判定: 要清掃・接触不良あり】以下のピンで異常を検知しました:');
+          for (const f of fails) {
+            let reason = '';
+            if (f.status === 'FAIL_STUCK_HIGH') reason = '常時 HIGH (1固定・断線・浮きの疑い)';
+            else if (f.status === 'FAIL_STUCK_LOW') reason = '常時 LOW (0固定・GND短絡の疑い)';
+            else if (f.status === 'FAIL_ALIAS') reason = 'アドレス切替不達 (無反応・エイリアス)';
+            log(`   ❌ [${f.name}] コネクタ端子: ${f.label} (Arduino: ${f.pin}) -> ${reason}`);
+          }
+          log('👉 対処: コネクタ端子（金メッキ）の清掃、または指定ピンのジャンパー線の押し込みを行ってください。');
+        }
+      } catch (err) {
+        log('ピン診断エラー: ' + err.message);
+      } finally {
+        if (bufReader) { try { bufReader.release(); } catch (_) {} }
+        btnTest.disabled = false;
+        btnPinCheck.disabled = false;
+        btnWireCheck.disabled = false;
+        btnDiag.disabled = false;
+        btnDump.disabled = false;
+      }
+    });
+
+    // Rewiring & Short Circuit Diagnostics
+    btnWireCheck.addEventListener('click', async () => {
+      btnTest.disabled = true;
+      btnPinCheck.disabled = true;
+      btnWireCheck.disabled = true;
+      btnDiag.disabled = true;
+      btnDump.disabled = true;
+      log('\n========================================');
+      log('⚡ 配線・短絡（ショート）診断を開始します (カセット未挿入推奨)...');
+
+      let bufReader = null;
+      try {
+        await drainSerial(150);
+        bufReader = new BufferedSerialReader(port.readable);
+        await sendCommand('WIRECHECK');
+
+        const hdr = await bufReader.readLineMatching('=== WIRECHECK START ===', 5000);
+        if (!hdr) throw new Error('診断開始応答を受信できませんでした');
+
+        const gndFaults = [];
+        const shortFaults = [];
+
+        while (true) {
+          const line = await bufReader.readLine(3000);
+          if (!line || line.includes('=== WIRECHECK END ===')) break;
+          if (line.startsWith('GND_FAULT:')) {
+            const parts = line.split(':');
+            gndFaults.push(`${parts[1]} (${parts[2]} / Arduino: ${parts[3]})`);
+          } else if (line.startsWith('SHORT_FAULT:')) {
+            shortFaults.push(line.replace('SHORT_FAULT:', ''));
+          }
+        }
+
+        log('\n--- 配線チェック判定 ---');
+        if (gndFaults.length === 0 && shortFaults.length === 0) {
+          log('✅ 【判定: PASS】全配線正常！');
+          log('   ピン同士の短絡（ショート）や、誤ったGND接続はありません。');
+        } else {
+          if (gndFaults.length > 0) {
+            log('❌ 【GND短絡検知】本来GNDでないピンがGNDに接続されています:');
+            gndFaults.forEach(g => log('   - ' + g));
+          }
+          if (shortFaults.length > 0) {
+            log('❌ 【ピン間短絡検知】以下のピン同士が接触・ショートしています:');
+            shortFaults.forEach(s => log('   - ' + s));
+          }
+        }
+      } catch (err) {
+        log('配線診断エラー: ' + err.message);
+      } finally {
+        if (bufReader) { try { bufReader.release(); } catch (_) {} }
+        btnTest.disabled = false;
+        btnPinCheck.disabled = false;
+        btnWireCheck.disabled = false;
         btnDiag.disabled = false;
         btnDump.disabled = false;
       }
@@ -557,7 +698,7 @@
     // Bank-switch Diagnostics
     btnDiag.addEventListener('click', async () => {
       btnTest.disabled = true;
-      btnDiag.disabled = true;
+      btnPinCheck.disabled = true; btnWireCheck.disabled = true; btnDiag.disabled = true;
       btnDump.disabled = true;
       log('\n========================================');
       log('🔍 バンク切り替え診断テストを開始します...');
@@ -616,7 +757,7 @@
           try { bufReader.release(); } catch (_) {}
         }
         btnTest.disabled = false;
-        btnDiag.disabled = false;
+        btnPinCheck.disabled = false; btnWireCheck.disabled = false; btnDiag.disabled = false;
         btnDump.disabled = false;
       }
     });
@@ -980,7 +1121,7 @@
       } finally {
         if (bufReader) bufReader.release();
         btnTest.disabled = false;
-        btnDiag.disabled = false;
+        btnPinCheck.disabled = false; btnWireCheck.disabled = false; btnDiag.disabled = false;
         btnDump.disabled = false;
       }
     });
