@@ -198,13 +198,22 @@ static inline uint8_t read_ppu_data_bus() {
 
 uint8_t read_prg_byte(uint16_t addr) {
   set_cpu_addr(addr);
-  delayMicroseconds(15);
   digitalWrite(PIN_CPU_RW, HIGH);
-  set_romsel(LOW);
-  delayMicroseconds(15);
-  uint8_t val = read_cpu_data_bus();
   set_romsel(HIGH);
-  delayMicroseconds(5);
+  digitalWrite(PIN_M2, LOW);
+  delayMicroseconds(2);
+  
+  // Real Famicom timing: /ROMSEL goes LOW only when M2 goes HIGH
+  digitalWrite(PIN_M2, HIGH);
+  set_romsel(LOW);
+  delayMicroseconds(8);
+  
+  uint8_t val = read_cpu_data_bus();
+  
+  set_romsel(HIGH);
+  digitalWrite(PIN_M2, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_M2, HIGH);
   return val;
 }
 
@@ -229,23 +238,31 @@ void write_cpu_byte(uint16_t addr, uint8_t data) {
     pinMode(PIN_CPU_D[i], OUTPUT);
     digitalWrite(PIN_CPU_D[i], (data >> i) & 1);
   }
-  delayMicroseconds(1);
+  
+  // Phase 1: M2 is LOW, /ROMSEL is HIGH, R/W goes LOW
+  set_romsel(HIGH);
+  digitalWrite(PIN_M2, LOW);
   digitalWrite(PIN_CPU_RW, LOW);
-  delayMicroseconds(1);
+  delayMicroseconds(2);
+
+  // Phase 2: M2 goes HIGH, /ROMSEL goes LOW (qualified by M2)
+  digitalWrite(PIN_M2, HIGH);
   if (is_rom_space) set_romsel(LOW);
+  delayMicroseconds(6);
+
+  // End of Phase 2: /ROMSEL goes HIGH, M2 goes LOW (falling edge latches)
+  if (is_rom_space) set_romsel(HIGH);
   digitalWrite(PIN_M2, LOW);
   delayMicroseconds(2);
-  digitalWrite(PIN_M2, HIGH);
-  delayMicroseconds(3);
-  digitalWrite(PIN_M2, LOW);
-  delayMicroseconds(1);
-  if (is_rom_space) set_romsel(HIGH);
+
+  // Return to Phase 1 / bus idle
   digitalWrite(PIN_CPU_RW, HIGH);
-  delayMicroseconds(1);
+  digitalWrite(PIN_M2, HIGH);
   for (int i = 0; i < 8; i++) {
     pinMode(PIN_CPU_D[i], INPUT_PULLUP);
   }
-  digitalWrite(PIN_M2, HIGH);
+  delayMicroseconds(2);
+  bus_idle();
 }
 
 void bank_select_write(uint16_t addr) {
@@ -447,7 +464,7 @@ void handle_famidump_read(char region, uint32_t addr, uint32_t len) {
     addr += n;
     len -= n;
   }
-  safe_high_z();
+  bus_idle();
   Serial.print(F("CRC "));
   print_hex8(crc ^ 0xFFFFFFFF);
   Serial.println();
@@ -532,7 +549,7 @@ void loop() {
         Serial.print(F("BANK "));
         print_hex4((uint16_t)addr);
         Serial.println();
-        safe_high_z();
+        bus_idle();
         break;
       case 'P':
         enable_bus();
@@ -542,7 +559,7 @@ void loop() {
         Serial.print(' ');
         print_hex2((uint8_t)len);
         Serial.println();
-        safe_high_z();
+        bus_idle();
         break;
       default:
         Serial.println(F("ERR_UNKNOWN_CMD"));

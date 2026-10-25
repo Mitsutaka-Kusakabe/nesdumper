@@ -227,7 +227,10 @@
         <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px;">
           Arduino Mega 2560 が接続されたCOMポート（例: COM3）を選択してください。
         </p>
-        <button id="btnTest" class="btn" disabled>カートリッジ疎通テスト (TEST)</button>
+        <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+          <button id="btnTest" class="btn" disabled>疎通テスト (TEST)</button>
+          <button id="btnDiag" class="btn" disabled>🔍 バンク切替診断</button>
+        </div>
       </div>
 
       <!-- カートリッジ設定 & 吸い出しカード -->
@@ -241,6 +244,7 @@
             <option value="mighty">マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
             <option value="mighty_mapper185">マイティボンジャック (原本仕様 Mapper 185 / 32KB PRG + 8KB CHR)</option>
             <option value="smb1" selected>スーパーマリオブラザーズ (NROM-256 / 32KB PRG + 8KB CHR / 垂直ミラー)</option>
+            <option value="famista88">プロ野球ファミリースタジアム'88 (高互換 Mapper 4 / 128KB PRG + 64KB CHR / 垂直ミラー)</option>
             <option value="smb3">スーパーマリオブラザーズ3 (Mapper 4 MMC3 / 256KB PRG + 128KB CHR)</option>
             <option value="nrom256">NROM-256 (32KB PRG + 8KB CHR) 例: マリオ等</option>
             <option value="custom">カスタム設定</option>
@@ -257,6 +261,7 @@
               <select id="prgSize">
                 <option value="16">16 KB ($C000-$FFFF)</option>
                 <option value="32">32 KB ($8000-$FFFF)</option>
+                <option value="128">128 KB (16バンク / ファミスタ等)</option>
                 <option value="256">256 KB (MMC3等 バンク切替)</option>
               </select>
             </div>
@@ -266,6 +271,7 @@
                 <option value="8">8 KB ($0000-$1FFF)</option>
                 <option value="16">16 KB (2バンク)</option>
                 <option value="32">32 KB (4バンク)</option>
+                <option value="64">64 KB (8バンク / ファミスタ等)</option>
                 <option value="128">128 KB (MMC3等 16バンク)</option>
                 <option value="0">0 KB (CHR-RAM)</option>
               </select>
@@ -279,6 +285,7 @@
                 <option value="3">Mapper 3 (CNROM バンク切替)</option>
                 <option value="4">Mapper 4 (MMC3)</option>
                 <option value="185">Mapper 185 (CNROM セキュリティプロテクト)</option>
+                <option value="206">Mapper 206 (Namcot 108/118 ファミスタ等)</option>
               </select>
             </div>
             <div class="form-group">
@@ -334,6 +341,7 @@
     const btnConnect = document.getElementById('btnConnect');
     const btnDisconnect = document.getElementById('btnDisconnect');
     const btnTest = document.getElementById('btnTest');
+    const btnDiag = document.getElementById('btnDiag');
     const btnDump = document.getElementById('btnDump');
     const connStatus = document.getElementById('connStatus');
     const consoleLog = document.getElementById('consoleLog');
@@ -397,6 +405,13 @@
         chrSizeSelect.value = '8';
         mapperSelect.value = '0';
         mirroringSelect.value = '1'; // Vertical
+      } else if (presetSelect.value === 'famista88') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'famista88.nes';
+        prgSizeSelect.value = '128';
+        chrSizeSelect.value = '64';
+        mapperSelect.value = '4'; // High compatibility Mapper 4 (MMC3)
+        mirroringSelect.value = '1'; // Vertical
       } else if (presetSelect.value === 'smb3') {
         customSettings.style.display = 'none';
         outFileName.value = 'super_mario_bros_3.nes';
@@ -433,6 +448,7 @@
         btnConnect.disabled = true;
         btnDisconnect.disabled = false;
         btnTest.disabled = false;
+        btnDiag.disabled = false;
         btnDump.disabled = false;
         connStatus.textContent = '接続中';
         connStatus.className = 'status-badge status-connected';
@@ -457,6 +473,7 @@
         btnConnect.disabled = false;
         btnDisconnect.disabled = true;
         btnTest.disabled = true;
+        btnDiag.disabled = true;
         btnDump.disabled = true;
         connStatus.textContent = '未接続';
         connStatus.className = 'status-badge status-disconnected';
@@ -532,6 +549,74 @@
         log('テストエラー: ' + err.message);
       } finally {
         btnTest.disabled = false;
+        btnDiag.disabled = false;
+        btnDump.disabled = false;
+      }
+    });
+
+    // Bank-switch Diagnostics
+    btnDiag.addEventListener('click', async () => {
+      btnTest.disabled = true;
+      btnDiag.disabled = true;
+      btnDump.disabled = true;
+      log('\n========================================');
+      log('🔍 バンク切り替え診断テストを開始します...');
+
+      let bufReader = null;
+      try {
+        await drainSerial(150);
+        bufReader = new BufferedSerialReader(port.readable);
+
+        const readSample16 = async (addr) => {
+          const cmd = `R ${addr.toString(16).toUpperCase()} 0010`;
+          await sendCommand(cmd);
+          const ok = await bufReader.readLineMatching('OK ', 3000);
+          if (!ok) throw new Error(`読み出し応答エラー ($${addr.toString(16).toUpperCase()})`);
+          const bytes = await bufReader.readExactBytes(16);
+          await bufReader.readLineMatching('CRC ', 2000);
+          return Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+        };
+
+        const writeBank = async (reg, bank) => {
+          await sendCommand(`P 8000 ${reg.toString(16).padStart(2, '0')}`);
+          await new Promise(r => setTimeout(r, 12));
+          await bufReader.readLine(500);
+          await sendCommand(`P 8001 ${bank.toString(16).padStart(2, '0')}`);
+          await new Promise(r => setTimeout(r, 12));
+          await bufReader.readLine(500);
+        };
+
+        log('1. 切替前の初期状態 ($8000-$800F) を取得中...');
+        const initDump = await readSample16(0x8000);
+        log(`   [初期状態]: ${initDump}`);
+
+        const results = [];
+        for (let b = 0; b < 4; b++) {
+          await writeBank(6, b); // R6 = 8KB PRG at $8000-$9FFF
+          await new Promise(r => setTimeout(r, 20));
+          const dump = await readSample16(0x8000);
+          results.push(dump);
+          log(`   [Bank ${b} に切替後]: ${dump}`);
+        }
+
+        const isAllSame = results.every(d => d === results[0]);
+        log('\n--- 診断判定 ---');
+        if (isAllSame) {
+          log('❌ 【判定】バンク切り替えが全く反映されていません！');
+          log('   Bank 0〜3のデータがすべて同一です。');
+          log('   考えられる原因: M2クロック(B29/D10)、/ROMSEL(B17/D14)、CPU R/W(A17/D13) の接触不良、または書き込みパルス幅の不足。');
+        } else {
+          log('✅ 【判定】バンク切り替えは正常に動作しています！');
+          log('   指定バンクごとにデータが正しく変化していることを確認しました。');
+        }
+      } catch (err) {
+        log('診断エラー: ' + err.message);
+      } finally {
+        if (bufReader) {
+          try { bufReader.release(); } catch (_) {}
+        }
+        btnTest.disabled = false;
+        btnDiag.disabled = false;
         btnDump.disabled = false;
       }
     });
@@ -681,12 +766,13 @@
         progressLabel.textContent = `PRG-ROM (${prgKB}KB) を吸い出し中...`;
         progressBar.style.width = '0%';
 
-        if (mapper === 4) {
-          // MMC3 PRG-ROM Dump (e.g. 256KB = 32 x 8KB banks)
+        if (mapper === 4 || mapper === 206) {
+          // MMC3 / Namcot 108 PRG-ROM Dump (e.g. 256KB = 32 x 8KB, 128KB = 16 x 8KB banks)
           // Banks 0..numBanks-3 are read in 16KB pairs via R6 ($8000-$9FFF) and R7 ($A000-$BFFF)
           const numBanks = prgKB / 8;
           const numPairs = (numBanks - 2) / 2;
-          log(`MMC3 PRG-ROM (${prgKB}KB / ${numBanks}バンク) バンク切り替え吸い出し中...`);
+          const mapperLabel = (mapper === 206) ? 'Namcot 108 (Mapper 206)' : 'MMC3';
+          log(`${mapperLabel} PRG-ROM (${prgKB}KB / ${numBanks}バンク) バンク切り替え吸い出し中...`);
 
           // Disable PRG-RAM write protect just in case
           await sendCommand('P A001 00');
@@ -763,10 +849,11 @@
         let chrData = new Uint8Array(chrBytesTotal);
         let jsChrCrc = 'N/A';
         if (chrBytesTotal > 0) {
-          if (mapper === 4) {
-            // MMC3 CHR-ROM Dump (e.g. 128KB = 16 x 8KB chunks)
+          if (mapper === 4 || mapper === 206) {
+            // MMC3 / Namcot 108 CHR-ROM Dump (e.g. 128KB = 16 x 8KB, 64KB = 8 x 8KB chunks)
             const num8k = chrKB / 8;
-            log(`MMC3 CHR-ROM (${chrKB}KB / ${num8k}チャンク) バンク切り替え吸い出し中...`);
+            const mapperLabel = (mapper === 206) ? 'Namcot 108 (Mapper 206)' : 'MMC3';
+            log(`${mapperLabel} CHR-ROM (${chrKB}KB / ${num8k}チャンク) バンク切り替え吸い出し中...`);
 
             for (let c = 0; c < num8k; c++) {
               const base1k = c * 8;
@@ -893,6 +980,7 @@
       } finally {
         if (bufReader) bufReader.release();
         btnTest.disabled = false;
+        btnDiag.disabled = false;
         btnDump.disabled = false;
       }
     });
