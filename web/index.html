@@ -233,6 +233,9 @@
           <button id="btnWireCheck" class="btn" disabled style="border-color: #f59e0b; color: #f59e0b;">⚡ 配線・短絡診断</button>
           <button id="btnDiag" class="btn" disabled>🔄 バンク切替診断</button>
         </div>
+        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 8px;">
+          💡 <strong>診断ガイド</strong>: 「🔍 全ピン接触診断」はカセットを挿して実行（端子の接触不良検出）、「⚡ 配線・短絡診断」はカセット未挿入時に実行（誤配線・ショート検出）してください。
+        </p>
       </div>
 
       <!-- カートリッジ設定 & 吸い出しカード -->
@@ -243,6 +246,7 @@
           <select id="presetSelect">
             <option value="ninjakun">忍者くん 魔城の冒険 (NROM-128 / 16KB PRG + 8KB CHR)</option>
 <option value="mahjong4">4人打ち麻雀 (NROM-128 / 16KB PRG + 8KB CHR / 垂直ミラー)</option>
+                        <option value="morita">森田将棋 (Mapper 1 MMC1 / 128KB PRG + 8KB CHR / バッテリーあり)</option>
             <option value="starsoldier">スターソルジャー (Mapper 3 CNROM / 32KB PRG + 32KB CHR)</option>
             <option value="mighty">マイティボンジャック (高互換 Mapper 0 / 32KB PRG + 8KB CHR)</option>
             <option value="mighty_mapper185">マイティボンジャック (原本仕様 Mapper 185 / 32KB PRG + 8KB CHR)</option>
@@ -285,6 +289,7 @@
               <label>マッパー</label>
               <select id="mapperSelect">
                 <option value="0">Mapper 0 (NROM)</option>
+                <option value="1">Mapper 1 (MMC1)</option>
                 <option value="3">Mapper 3 (CNROM バンク切替)</option>
                 <option value="4">Mapper 4 (MMC3)</option>
                 <option value="185">Mapper 185 (CNROM セキュリティプロテクト)</option>
@@ -389,7 +394,14 @@
         chrSizeSelect.value = '8';
         mapperSelect.value = '0';
         mirroringSelect.value = '1'; // Vertical
-      } else if (presetSelect.value === 'starsoldier') {
+            } else if (presetSelect.value === 'morita') {
+        customSettings.style.display = 'none';
+        outFileName.value = 'morita_shogi.nes';
+        prgSizeSelect.value = '128';
+        chrSizeSelect.value = '8';
+        mapperSelect.value = '1';
+        mirroringSelect.value = '0'; // Horizontal
+} else if (presetSelect.value === 'starsoldier') {
         customSettings.style.display = 'none';
         outFileName.value = 'star_soldier.nes';
         prgSizeSelect.value = '32';
@@ -907,7 +919,39 @@
         progressLabel.textContent = `PRG-ROM (${prgKB}KB) を吸い出し中...`;
         progressBar.style.width = '0%';
 
-        if (mapper === 4 || mapper === 206) {
+                        if (mapper === 1) {
+          // MMC1 PRG-ROM Dump (128KB = 8 x 16KB banks)
+          // Exact algorithm from OSCR (sanni/cartreader):
+          const numBanks = Math.max(1, Math.floor(prgKB / 16));
+          log(`MMC1 PRG-ROM (${prgKB}KB / ${numBanks}バンク) バンク切り替え吸い出し中...`);
+
+          for (let b = 0; b < numBanks; b++) {
+            // 1. Clear register
+            await sendCommand('MMC1 8000 80');
+            await bufReader.readLineMatching('MMC1_OK', 3000);
+
+            // 2. Control reg 0x0C (Switch 16K Bank at $8000 + Fixed Last Bank at $C000)
+            await sendCommand('MMC1 8000 0C');
+            await bufReader.readLineMatching('MMC1_OK', 3000);
+
+            // 3. Select PRG Bank b
+            await sendCommand(`MMC1 E000 ${b.toString(16).padStart(2, '0')}`);
+            await bufReader.readLineMatching('MMC1_OK', 3000);
+
+            // 4. Read 16KB from $8000
+            await sendCommand('R 8000 4000');
+            const hdr = await bufReader.readLineMatching('OK ', 5000);
+            if (!hdr) throw new Error(`MMC1 バンク ${b} 開始応答が受信できませんでした`);
+            const chunk = await bufReader.readExactBytes(16384, (done, total) => {
+              const currentTotal = (b * 16384) + done;
+              const pct = Math.floor((currentTotal / prgBytesTotal) * 50);
+              progressBar.style.width = `${pct}%`;
+              progressLabel.textContent = `PRG バンク ${b+1}/${numBanks}: ${currentTotal} / ${prgBytesTotal} bytes (${pct * 2}%)`;
+            });
+            prgData.set(chunk, b * 16384);
+            await bufReader.readLineMatching('CRC ', 3000);
+          }
+        } else if (mapper === 4 || mapper === 206) {
           // MMC3 / Namcot 108 PRG-ROM Dump (e.g. 256KB = 32 x 8KB, 128KB = 16 x 8KB banks)
           // Banks 0..numBanks-3 are read in 16KB pairs via R6 ($8000-$9FFF) and R7 ($A000-$BFFF)
           const numBanks = prgKB / 8;
@@ -1093,8 +1137,13 @@
         inesHeader[3] = 0x1A; // EOF
         inesHeader[4] = prgKB / 16; // 16KB PRG units
         inesHeader[5] = chrKB / 8;  // 8KB CHR units
-        inesHeader[6] = ((mapper & 0x0F) << 4) | (mirroring & 0x01); // Mapper lower nibble + Mirroring
+        let flag6 = ((mapper & 0x0F) << 4) | (mirroring & 0x01);
+        if (presetSelect.value === 'morita') {
+          flag6 |= 0x02; // Battery-backed PRG-RAM
+        }
+        inesHeader[6] = flag6; // Mapper lower nibble + Mirroring
         inesHeader[7] = (mapper & 0xF0); // Mapper upper nibble
+        inesHeader[8] = (presetSelect.value === 'morita') ? 1 : 0; // 8KB PRG-RAM
 
         const totalNesSize = 16 + prgData.length + chrData.length;
         const nesRom = new Uint8Array(totalNesSize);

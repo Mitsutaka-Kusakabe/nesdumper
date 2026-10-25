@@ -250,9 +250,10 @@ void write_cpu_byte(uint16_t addr, uint8_t data) {
   if (is_rom_space) set_romsel(LOW);
   delayMicroseconds(6);
 
-  // End of Phase 2: /ROMSEL goes HIGH, M2 goes LOW (falling edge latches)
-  if (is_rom_space) set_romsel(HIGH);
+  // End of Phase 2: M2 falls while /ROMSEL is still LOW (latches mapper)
   digitalWrite(PIN_M2, LOW);
+  delayMicroseconds(1);
+  if (is_rom_space) set_romsel(HIGH);
   delayMicroseconds(2);
 
   // Return to Phase 1 / bus idle
@@ -600,6 +601,21 @@ void cmd_pincheck() {
   Serial.println(F("=== PINCHECK END ==="));
 }
 
+void cmd_mmc1_write(uint16_t addr, uint8_t val) {
+  enable_bus();
+  delayMicroseconds(10);
+  if (val & 0x80) {
+    write_cpu_byte(addr, 0x80);
+  } else {
+    for (int i = 0; i < 5; i++) {
+      write_cpu_byte(addr, (val >> i) & 1);
+      delayMicroseconds(5);
+    }
+  }
+  bus_idle();
+  Serial.println(F("MMC1_OK"));
+}
+
 void cmd_test() {
   enable_bus();
   delayMicroseconds(50);
@@ -741,6 +757,17 @@ void loop() {
       return;
     } else if (line == "PROBE") {
       cmd_probe();
+      return;
+    } else if (line.startsWith("MMC1 ")) {
+      int sp1 = line.indexOf(' ');
+      int sp2 = line.indexOf(' ', sp1 + 1);
+      if (sp1 > 0 && sp2 > 0) {
+        uint16_t addr = strtoul(line.substring(sp1 + 1, sp2).c_str(), NULL, 16);
+        uint8_t val = strtoul(line.substring(sp2 + 1).c_str(), NULL, 16);
+        cmd_mmc1_write(addr, val);
+      } else {
+        Serial.println(F("ERR_INVALID_PARAMS"));
+      }
       return;
     } else if (line.startsWith("DUMP_PRG")) {
       int sp1 = line.indexOf(' ');
